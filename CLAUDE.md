@@ -2,31 +2,70 @@
 
 ## Purpose
 
-Real-time drawing tool that sends the user's drawing to an AI image model and generates new images from it. Think: user sketches on a canvas, model produces polished / reinterpreted images in near real time.
-
-The user-facing loop is **draw → transform → new image**, so latency, incremental updates, and the canvas ↔ model interaction pattern are the parts of the app that matter most.
+Drawing tool where the user sketches on a canvas, clicks **Generate**, and an AI image model (FAL.ai) returns an image based on the sketch + a text prompt. The long-term vision is a real-time draw → transform → new image loop; v1 ships the synchronous version (draw → button → generate) to derisk the FAL integration and canvas quality first.
 
 ## Stack
 
 - **Framework:** Next.js 16 (App Router, `src/` directory)
-- **Language:** TypeScript
+- **Language:** TypeScript (strict)
 - **Styling:** Tailwind CSS v4
 - **Linting:** ESLint (`eslint-config-next`)
 - **Package manager:** npm
 - **Node:** v24.x
 - **Import alias:** `@/*` → `src/*`
 
-- **AI provider:** [FAL.ai](https://fal.ai) — chosen for low-latency hosted inference, good fit for the real-time loop.
+### Feature-specific deps
 
-Canvas library is not yet chosen. When picking, bias toward something with real React ergonomics (e.g., `react-konva`, `tldraw`, or a thin wrapper over raw `<canvas>`) — avoid imperative DOM-heavy libraries that fight React.
+- **AI provider:** [FAL.ai](https://fal.ai) via [`@fal-ai/client`](https://www.npmjs.com/package/@fal-ai/client)
+- **Drawing surface:** [`perfect-freehand`](https://github.com/steveruizok/perfect-freehand) rendered into an SVG (display) + an offscreen `<canvas>` (PNG export for FAL)
+
+## Setup
+
+The app requires a FAL API key in `.env.local` to do anything useful.
+
+1. `cp .env.example .env.local`
+2. Open https://fal.ai/dashboard/keys and create a key
+3. Paste the key into `.env.local` as the value of `FAL_KEY` (no quotes, no trailing spaces)
+4. `npm install`
+5. `npm run dev` → http://localhost:3000
+
+`.env.local` is gitignored (global `.env*` rule); `.env.example` is explicitly un-ignored via `!.env.example`.
 
 ## FAL.ai integration
 
-- **SDK:** `@fal-ai/client` (JavaScript/TypeScript client).
-- **API key:** stored as `FAL_KEY` in `.env.local` (already gitignored via the `.env*` rule). **Never commit the key and never ship it to the client bundle.**
-- **Call pattern:** proxy FAL calls through Next.js server code — either a Route Handler (`src/app/api/.../route.ts`) or a Server Action. The browser should hit our own endpoint, never FAL directly with the raw key. FAL offers a built-in `serverProxy` helper for Next.js that handles this cleanly.
-- **Model selection:** for the sketch-to-image loop, prefer fast / turbo variants (FLUX-schnell, fast-SDXL, lightning models) or a ControlNet variant that takes the sketch as a conditioning input. Exact model ID should live in one place (a config constant) so it's swappable.
-- **Streaming / realtime:** FAL supports queue + streaming APIs. For the "draw → new image" loop, debounce canvas changes and use the streaming endpoint rather than firing a request per stroke.
+- **SDK:** `@fal-ai/client`. Configured once at module scope in `src/app/api/generate/route.ts` via `fal.config({ credentials: process.env.FAL_KEY })`.
+- **Model (v1):** `fal-ai/flux/dev/image-to-image` with `strength: 0.85`. Straight img2img — does not preserve sketch lines as tightly as a ControlNet pipeline would. If output drifts too far from the sketch, swap `MODEL_ID` in `route.ts` to a ControlNet variant (e.g., a `fal-ai/flux-general/image-to-image` + canny configuration — schema requires verification against https://fal.ai/models before wiring up).
+- **Input transport:** the client sends a base64 PNG data URI in JSON; the server converts it to a `Blob`, uploads via `fal.storage.upload()` to get a hosted URL, then passes the URL as `image_url` to `fal.subscribe()`. More reliable than inline data URIs across FAL endpoints.
+- **Never commit the key. Never ship it to the client bundle.** The variable must NOT be prefixed `NEXT_PUBLIC_` — that would inline it into the browser bundle. `FAL_KEY` is referenced only in `src/app/api/generate/route.ts`.
+- **Error handling:** the Route Handler normalizes all failures to `{ ok: false, error: "Generation failed — please try again" }` (HTTP 502) or input-validation variants (400 / 413). Raw FAL response bodies, stack traces, and request IDs are logged server-side via `console.error(err.message)` — never forwarded to the client.
+- **Generation loop:** On-demand only — user clicks Generate, the server fires one FAL call, the result displays. No debouncing, no streaming, no auto-fire.
+
+## File layout
+
+```
+src/
+├── app/
+│   ├── api/generate/route.ts   # POST — FAL proxy with normalized errors
+│   ├── layout.tsx               # root layout + metadata
+│   ├── page.tsx                 # 'use client' — two-panel UI, generation state
+│   └── globals.css              # Tailwind v4 entry
+├── components/
+│   └── DrawingCanvas.tsx        # SVG pen surface, brush sizes, Clear, undo, exportPng()
+docs/
+├── brainstorms/drawing-tool-requirements.md   # v1 product scope
+└── plans/2026-04-15-001-feat-drawing-tool-v1-plan.md
+```
+
+## Drawing surface conventions
+
+- **State shape:** `strokes: Stroke[]` (committed) + `inProgress: Stroke | null` (current). Strokes are committed on `pointerup`. Storing strokes as discrete objects keeps undo cheap and lets the same stroke data render in SVG (display) and Canvas 2D (export).
+- **Render symmetry:** both display and PNG export go through `getStroke()` + a shared `outlineToSvgPath()` helper. The export uses `new Path2D(pathString)` on an offscreen 1024×1024 canvas so FAL always sees the same geometry the user saw, scaled up.
+- **Stroke options pinned:** `simulatePressure: false`, `thinning: 0`. With mouse input (uniform `pressure: 0.5`), simulated-pressure mode produces velocity-dependent stroke widths that don't match the user's brush-size selection. Disabling it keeps S/M/L (4/8/16 px) consistent.
+- **Undo:** Single-level via `Cmd/Ctrl+Z`. The `keydown` listener is mounted on `window` but guards against firing when focus is in an `<input>`, `<textarea>`, or `contenteditable` — so the prompt input's native undo still works.
+
+## Image display
+
+The `<Image>` component uses `unoptimized` and `next.config.ts` includes FAL's hosted image domains in `images.remotePatterns` (`**.fal.media`, `**.fal.ai`).
 
 ## Commands
 
@@ -36,6 +75,7 @@ Canvas library is not yet chosen. When picking, bias toward something with real 
 | Production build | `npm run build` |
 | Production start | `npm start` |
 | Lint | `npm run lint` |
+| Type-check | `npx tsc --noEmit` |
 
 ## Repository
 
@@ -44,7 +84,14 @@ Canvas library is not yet chosen. When picking, bias toward something with real 
 
 ## Local-only files (not committed)
 
-`.claude/settings.local.json` is excluded via `.gitignore` — it stores per-user Claude Code permission grants and must stay local.
+- `.env.local` — holds the real `FAL_KEY`. Covered by the global `.env*` gitignore rule.
+- `.claude/settings.local.json` — per-user Claude Code permission grants. Explicitly gitignored.
+
+## Scope boundaries (v1)
+
+v1 is deliberately localhost-only. **No Upstash rate limiting, no body-size clamping at the edge, no public-deploy hardening is currently wired.** If the app is ever deployed to a public URL, those need to be added before the Route Handler becomes publicly reachable — otherwise the FAL API credits are an open faucet.
+
+Also out of scope: layers, color picker, eraser, shapes, mobile/touch support, persistence across refresh, streaming generation, authentication.
 
 ## Conventions
 
