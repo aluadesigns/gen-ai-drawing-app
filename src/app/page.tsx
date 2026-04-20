@@ -106,7 +106,7 @@ export default function Home() {
       </div>
 
       <footer className="text-xs text-neutral-500">
-        Powered by FAL · FLUX img2img
+        Powered by FAL · FLUX.2 [klein] 4B Edit
       </footer>
     </main>
   );

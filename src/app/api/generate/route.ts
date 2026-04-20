@@ -5,8 +5,7 @@ export const maxDuration = 60;
 
 fal.config({ credentials: process.env.FAL_KEY });
 
-const MODEL_ID = "fal-ai/flux/dev/image-to-image";
-const STRENGTH = 0.85;
+const MODEL_ID = "fal-ai/flux-2/klein/4b/edit";
 const MAX_PROMPT_CHARS = 500;
 const MAX_SKETCH_CHARS = 500_000; // ~375KB base64 → ~280KB raw PNG, plenty for a 1024² line-art sketch
 
@@ -39,9 +38,8 @@ export async function POST(req: Request): Promise<Response> {
 
     const result = await fal.subscribe(MODEL_ID, {
       input: {
-        prompt: prompt.trim() || "detailed illustration, high quality",
-        image_url: sketchUrl,
-        strength: STRENGTH,
+        prompt: prompt.trim() || "turn this sketch into a detailed, polished illustration",
+        image_urls: [sketchUrl],
       },
       logs: false,
     });
