@@ -1,4 +1,4 @@
-import { supabase, DRAWINGS_BUCKET } from "@/lib/supabase";
+import { getSupabase, DRAWINGS_BUCKET } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -22,6 +22,7 @@ export async function GET(
       return json<LoadResponse>({ ok: false, error: "Invalid drawing id" }, 400);
     }
 
+    const supabase = getSupabase();
     const { data, error } = await supabase
       .from("drawings")
       .select("strokes, prompt, image_path")

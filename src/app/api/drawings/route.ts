@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { supabase, DRAWINGS_BUCKET } from "@/lib/supabase";
+import { getSupabase, DRAWINGS_BUCKET } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -64,6 +64,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const id = nanoid();
     const objectKey = `${id}.png`;
+    const supabase = getSupabase();
 
     const { error: uploadError } = await supabase.storage
       .from(DRAWINGS_BUCKET)
