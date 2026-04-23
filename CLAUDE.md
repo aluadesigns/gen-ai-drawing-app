@@ -28,9 +28,13 @@ The app requires a FAL API key and a Supabase project in `.env.local` to do anyt
 1. `cp .env.example .env.local`
 2. Open https://fal.ai/dashboard/keys and paste the key into `.env.local` as `FAL_KEY` (no quotes, no trailing spaces)
 3. Create a Supabase project at https://supabase.com/dashboard, then paste `supabase/schema.sql` into the project's SQL editor and run it (creates the `drawings` table + public Storage bucket)
-4. From Supabase → Settings → API, copy the project URL and the `service_role` key into `.env.local` as `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+4. Copy the project URL and a server-side key into `.env.local`:
+   - `SUPABASE_URL` — **Settings → Data API → Project URL**. Uses the project's random ID (e.g., `https://abcdefghijklmn.supabase.co`), *not* the human-readable name you picked. Must end in `.supabase.co`, not `.com`.
+   - `SUPABASE_SERVICE_ROLE_KEY` — **Settings → API Keys**. Either a new-format Secret key (`sb_secret_…` under "Secret keys") or the legacy `service_role` key (under the "Legacy anon, service_role API keys" tab). The env var name stays `SUPABASE_SERVICE_ROLE_KEY` either way; the client just passes the string to `createClient`. Never the Publishable/anon key — it's subject to RLS (which is enabled with no policies) and will silently return empty results.
 5. `npm install`
 6. `npm run dev` → http://localhost:3000
+
+Restart the dev server after editing `.env.local` — Next.js only reads env vars on startup.
 
 `.env.local` is gitignored (global `.env*` rule); `.env.example` is explicitly un-ignored via `!.env.example`.
 
@@ -45,7 +49,8 @@ The app requires a FAL API key and a Supabase project in `.env.local` to do anyt
 
 ## Supabase integration
 
-- **SDK:** `@supabase/supabase-js`. A single configured service-role client lives in `src/lib/supabase.ts` (`persistSession: false` — server-only, never reads/writes auth tokens).
+- **SDK:** `@supabase/supabase-js`. A single configured service-role client lives in `src/lib/supabase.ts` (`persistSession: false` — server-only, never reads/writes auth tokens). The client is **lazy-initialized via `getSupabase()`** rather than built at module scope: routes call it at request time so `next build` page-data collection doesn't crash in environments that don't yet have the env vars set. Diverges from the FAL route's module-scope config for that reason.
+- **`import "server-only"`** at the top of `src/lib/supabase.ts` — Next.js will surface a build error if any `'use client'` file ever imports the module, which is the final guard against the service-role key ending up in the browser bundle.
 - **Schema:** `supabase/schema.sql` creates a `drawings` table (`id text pk, strokes jsonb, prompt text, image_path text, created_at`) and a **public** Storage bucket also named `drawings`.
 - **Saved pair:** a "save" captures the drawn strokes + prompt + the FAL-generated image together. Each save gets a new `nanoid()` — immutable snapshots, no updates. URL possession = access; the bucket is intentionally public since the DB id is the only secret.
 - **Image durability:** generated images are **re-hosted in Supabase Storage**, not referenced by FAL URL. FAL URLs are not documented as permanent, so a share link that relied on them would rot silently. `POST /api/drawings` fetches the bytes from FAL, uploads to `drawings/<id>.png`, and stores the path in the DB row.
