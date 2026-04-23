@@ -12,14 +12,19 @@ import {
 import { getStroke } from "perfect-freehand";
 
 type StrokePoint = [x: number, y: number, pressure: number];
-type Stroke = { points: StrokePoint[]; size: number };
+export type Stroke = { points: StrokePoint[]; size: number };
 
 export type DrawingCanvasHandle = {
   exportPng: () => string;
+  getStrokes: () => Stroke[];
 };
 
 type Props = {
   onStrokesChange?: (hasStrokes: boolean) => void;
+  // Only consumed at mount. Changing this prop after mount does NOT reset
+  // the canvas — that would silently destroy the user's in-progress work
+  // if the parent re-rendered with a different value.
+  initialStrokes?: Stroke[];
 };
 
 // Display dimensions (CSS px). Export is always 1024×1024 regardless.
@@ -54,8 +59,8 @@ function outlineToSvgPath(points: number[][]): string {
 }
 
 export const DrawingCanvas = forwardRef<DrawingCanvasHandle, Props>(
-  function DrawingCanvas({ onStrokesChange }, ref) {
-    const [strokes, setStrokes] = useState<Stroke[]>([]);
+  function DrawingCanvas({ onStrokesChange, initialStrokes }, ref) {
+    const [strokes, setStrokes] = useState<Stroke[]>(() => initialStrokes ?? []);
     const [inProgress, setInProgress] = useState<Stroke | null>(null);
     const [brushSize, setBrushSize] = useState<number>(8);
     const svgRef = useRef<SVGSVGElement | null>(null);
@@ -147,7 +152,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, Props>(
       return canvas.toDataURL("image/png");
     }, [strokes]);
 
-    useImperativeHandle(ref, () => ({ exportPng }), [exportPng]);
+    const getStrokes = useCallback((): Stroke[] => strokes, [strokes]);
+
+    useImperativeHandle(ref, () => ({ exportPng, getStrokes }), [exportPng, getStrokes]);
 
     // Build all stroke paths for display.
     const renderStroke = (stroke: Stroke, key: string) => {
